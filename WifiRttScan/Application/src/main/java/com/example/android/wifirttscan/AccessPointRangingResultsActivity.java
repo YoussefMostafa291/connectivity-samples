@@ -285,7 +285,7 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
                  OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
                 for (String row : mCsvRows) {
                     writer.write(row);
-                    writer.write("\\n");
+                    writer.write("\n");
                 }
                 writer.flush();
                 Toast.makeText(this, "CSV exported: " + (mCsvRows.size() - 1) + " measurements", Toast.LENGTH_LONG).show();
@@ -298,7 +298,7 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
 
     private String csvEscape(String value) {
         if (value == null) return "";
-        return "\\\"" + value.replace("\\\"", "\\\"\\\"") + "\\\"";
+        return "\"" + value.replace("\"", "\"\"") + "\"";
     }
 
     private void recordMeasurement(RangingResult result) {
