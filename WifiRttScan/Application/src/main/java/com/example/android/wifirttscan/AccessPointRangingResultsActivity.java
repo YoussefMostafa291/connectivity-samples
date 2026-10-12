@@ -18,6 +18,7 @@ package com.example.android.wifirttscan;
 import android.Manifest.permission;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.PackageManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.rtt.RangingRequest;
@@ -35,8 +36,14 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Displays ranging information about a particular access point chosen by the user. Uses {@link
@@ -49,6 +56,7 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
             "com.example.android.wifirttscan.extra.SCAN_RESULT";
 
     private static final int SAMPLE_SIZE_DEFAULT = 50;
+    private static final int CREATE_CSV_FILE_REQUEST = 4102;
     private static final int MILLISECONDS_DELAY_BEFORE_NEW_RANGING_REQUEST_DEFAULT = 1000;
 
     // UI Elements.
@@ -66,6 +74,9 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
 
     private EditText mSampleSizeEditText;
     private EditText mMillisecondsDelayBeforeNewRangingRequestEditText;
+    private EditText mCoordinateXEditText;
+    private EditText mCoordinateYEditText;
+    private final ArrayList<String> mCsvRows = new ArrayList<>();
 
     // Non UI variables.
     private ScanResult mScanResult;
@@ -119,6 +130,11 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
 
         mSampleSizeEditText = findViewById(R.id.stats_window_size_edit_value);
         mSampleSizeEditText.setText(SAMPLE_SIZE_DEFAULT + "");
+
+        mCoordinateXEditText = findViewById(R.id.coordinate_x_edit);
+        mCoordinateYEditText = findViewById(R.id.coordinate_y_edit);
+        mCsvRows.clear();
+        mCsvRows.add("timestamp,x_m,y_m,rtt_m,rssi_dbm,rtt_stddev_m,bssid,ssid");
 
         mMillisecondsDelayBeforeNewRangingRequestEditText =
                 findViewById(R.id.ranging_period_edit_value);
@@ -248,6 +264,61 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
         resetData();
     }
 
+    public void onExportCsvButtonClick(View view) {
+        if (mCsvRows.size() <= 1) {
+            Toast.makeText(this, "No successful measurements recorded yet. Enter X/Y and wait for RTT results.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/csv");
+        intent.putExtra(Intent.EXTRA_TITLE, "wifi_rtt_measurements.csv");
+        startActivityForResult(intent, CREATE_CSV_FILE_REQUEST);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == CREATE_CSV_FILE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri uri = data.getData();
+            try (OutputStream outputStream = getContentResolver().openOutputStream(uri);
+                 OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+                for (String row : mCsvRows) {
+                    writer.write(row);
+                    writer.write("\\n");
+                }
+                writer.flush();
+                Toast.makeText(this, "CSV exported: " + (mCsvRows.size() - 1) + " measurements", Toast.LENGTH_LONG).show();
+            } catch (IOException | NullPointerException e) {
+                Log.e(TAG, "Unable to export CSV", e);
+                Toast.makeText(this, "Could not save CSV file", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    private String csvEscape(String value) {
+        if (value == null) return "";
+        return "\\\"" + value.replace("\\\"", "\\\"\\\"") + "\\\"";
+    }
+
+    private void recordMeasurement(RangingResult result) {
+        String xText = mCoordinateXEditText.getText().toString().trim();
+        String yText = mCoordinateYEditText.getText().toString().trim();
+        if (xText.isEmpty() || yText.isEmpty()) return;
+        try {
+            double x = Double.parseDouble(xText);
+            double y = Double.parseDouble(yText);
+            String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(new Date());
+            double rttMeters = result.getDistanceMm() / 1000.0;
+            double stdDevMeters = result.getDistanceStdDevMm() / 1000.0;
+            String ssid = mScanResult != null ? mScanResult.SSID : "";
+            mCsvRows.add(csvEscape(timestamp) + "," + x + "," + y + "," + rttMeters + ","
+                    + result.getRssi() + "," + stdDevMeters + "," + csvEscape(mMAC) + "," + csvEscape(ssid));
+        } catch (NumberFormatException e) {
+            Toast.makeText(this, "X and Y must be valid numbers (meters)", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     // Class that handles callbacks for all RangingRequests and issues new RangingRequests.
     private class RttRangingResultCallback extends RangingResultCallback {
 
@@ -297,6 +368,7 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
                                 (getStandardDeviationOfDistanceMean() / 1000f) + "");
 
                         mRssiTextView.setText(rangingResult.getRssi() + "");
+                        recordMeasurement(rangingResult);
                         mSuccessesInBurstTextView.setText(
                                 rangingResult.getNumSuccessfulMeasurements()
                                         + "/"
