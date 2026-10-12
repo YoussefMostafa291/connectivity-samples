@@ -19,6 +19,12 @@ import android.Manifest.permission;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import android.content.pm.PackageManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.rtt.RangingRequest;
@@ -76,6 +82,9 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
     private EditText mMillisecondsDelayBeforeNewRangingRequestEditText;
     private EditText mCoordinateXEditText;
     private EditText mCoordinateYEditText;
+    private EditText mServerUrlEditText;
+    private TextView mServerStatusTextView;
+    private final ExecutorService mUploadExecutor = Executors.newSingleThreadExecutor();
     private final ArrayList<String> mCsvRows = new ArrayList<>();
 
     // Non UI variables.
@@ -133,6 +142,8 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
 
         mCoordinateXEditText = findViewById(R.id.coordinate_x_edit);
         mCoordinateYEditText = findViewById(R.id.coordinate_y_edit);
+        mServerUrlEditText = findViewById(R.id.server_url_edit);
+        mServerStatusTextView = findViewById(R.id.server_status);
         mCsvRows.clear();
         mCsvRows.add("timestamp,x_m,y_m,rtt_m,rssi_dbm,rtt_stddev_m,bssid,ssid");
 
@@ -301,22 +312,94 @@ public class AccessPointRangingResultsActivity extends AppCompatActivity {
         return "\"" + value.replace("\"", "\"\"") + "\"";
     }
 
-    private void recordMeasurement(RangingResult result) {
-        String xText = mCoordinateXEditText.getText().toString().trim();
-        String yText = mCoordinateYEditText.getText().toString().trim();
-        if (xText.isEmpty() || yText.isEmpty()) return;
-        try {
-            double x = Double.parseDouble(xText);
-            double y = Double.parseDouble(yText);
-            String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).format(new Date());
-            double rttMeters = result.getDistanceMm() / 1000.0;
-            double stdDevMeters = result.getDistanceStdDevMm() / 1000.0;
-            String ssid = mScanResult != null ? mScanResult.SSID : "";
-            mCsvRows.add(csvEscape(timestamp) + "," + x + "," + y + "," + rttMeters + ","
-                    + result.getRssi() + "," + stdDevMeters + "," + csvEscape(mMAC) + "," + csvEscape(ssid));
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "X and Y must be valid numbers (meters)", Toast.LENGTH_SHORT).show();
+    private void recordMeasurement(final RangingResult result) {
+        final String xText = mCoordinateXEditText.getText().toString().trim();
+        final String yText = mCoordinateYEditText.getText().toString().trim();
+        final String serverUrl = mServerUrlEditText.getText().toString().trim();
+        if (xText.isEmpty() || yText.isEmpty()) {
+            setServerStatus("Enter X and Y to send measurements.");
+            return;
         }
+        if (serverUrl.isEmpty()) {
+            setServerStatus("Enter laptop server URL, e.g. http://192.168.1.10:5000/measurements");
+            return;
+        }
+        try {
+            final double x = Double.parseDouble(xText);
+            final double y = Double.parseDouble(yText);
+            if (Double.isNaN(x) || Double.isInfinite(x) || Double.isNaN(y) || Double.isInfinite(y)) {
+                setServerStatus("X and Y must be finite numbers.");
+                return;
+            }
+            final String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(new Date());
+            final double rttMeters = result.getDistanceMm() / 1000.0;
+            final double stdDevMeters = result.getDistanceStdDevMm() / 1000.0;
+            final String ssid = mScanResult != null ? mScanResult.SSID : "";
+            final String bssid = mMAC;
+            mCsvRows.add(csvEscape(timestamp) + "," + x + "," + y + "," + rttMeters + ","
+                    + result.getRssi() + "," + stdDevMeters + "," + csvEscape(bssid) + "," + csvEscape(ssid));
+            final JSONObject payload = new JSONObject();
+            payload.put("timestamp", timestamp);
+            payload.put("x_m", x);
+            payload.put("y_m", y);
+            payload.put("rtt_m", rttMeters);
+            payload.put("rssi_dbm", result.getRssi());
+            payload.put("rtt_stddev_m", stdDevMeters);
+            payload.put("bssid", bssid);
+            payload.put("ssid", ssid);
+            mUploadExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection connection = null;
+                    try {
+                        URL url = new URL(serverUrl);
+                        connection = (HttpURLConnection) url.openConnection();
+                        connection.setRequestMethod("POST");
+                        connection.setConnectTimeout(3000);
+                        connection.setReadTimeout(3000);
+                        connection.setDoOutput(true);
+                        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                        connection.setRequestProperty("Accept", "application/json");
+                        byte[] body = payload.toString().getBytes("UTF-8");
+                        connection.setFixedLengthStreamingMode(body.length);
+                        OutputStream output = connection.getOutputStream();
+                        try {
+                            output.write(body);
+                            output.flush();
+                        } finally {
+                            output.close();
+                        }
+                        int status = connection.getResponseCode();
+                        if (status >= 200 && status < 300) {
+                            setServerStatus("Server connected — last upload HTTP " + status);
+                        } else {
+                            setServerStatus("Server returned HTTP " + status + ". Check endpoint/logs.");
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Measurement upload failed", e);
+                        setServerStatus("Upload failed: " + e.getClass().getSimpleName()
+                                + ". Check URL, Wi-Fi and laptop firewall.");
+                    } finally {
+                        if (connection != null) connection.disconnect();
+                    }
+                }
+            });
+        } catch (NumberFormatException e) {
+            setServerStatus("X and Y must be valid numbers.");
+        } catch (JSONException e) {
+            Log.e(TAG, "Could not create measurement JSON", e);
+            setServerStatus("Could not prepare measurement.");
+        }
+    }
+
+    private void setServerStatus(final String message) {
+        if (mServerStatusTextView == null) return;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mServerStatusTextView.setText(message);
+            }
+        });
     }
 
     // Class that handles callbacks for all RangingRequests and issues new RangingRequests.
