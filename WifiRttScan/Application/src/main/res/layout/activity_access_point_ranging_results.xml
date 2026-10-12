@@ -75,6 +75,36 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/bssid" />
 
+    <EditText
+        android:id="@+id/server_url_edit"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="2dp"
+        android:hint="Laptop server URL (http://IP:5000/measurements)"
+        android:inputType="textUri"
+        android:singleLine="true"
+        android:text="http://192.168.1.10:5000/measurements"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/coordinate_y_edit" />
+
+    <TextView
+        android:id="@+id/server_status"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="0dp"
+        android:text="Waiting for coordinates and server..."
+        android:textSize="11sp"
+        android:maxLines="2"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/server_url_edit" />
+
     <View
         android:id="@+id/divider1"
         android:layout_width="0dp"
@@ -86,7 +116,7 @@
         android:visibility="visible"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/coordinate_y_edit" />
+        app:layout_constraintTop_toBottomOf="@+id/server_status" />
 
     <TextView
         android:id="@+id/range_label"
